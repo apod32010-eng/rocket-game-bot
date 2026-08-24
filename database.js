@@ -23,6 +23,8 @@ function initializeDatabase() {
         total_wins INTEGER DEFAULT 0,
         total_losses INTEGER DEFAULT 0,
         total_spins INTEGER DEFAULT 0,
+        daily_reward_claimed INTEGER DEFAULT 0,
+        last_reward_date TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -42,6 +44,19 @@ function initializeDatabase() {
       )
     `);
 
+    // Slot machine results table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS slot_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        bet_amount REAL,
+        prize_type TEXT,
+        winnings REAL,
+        spin_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(user_id)
+      )
+    `);
+
     // Gift wheel spins table
     db.run(`
       CREATE TABLE IF NOT EXISTS gift_spins (
@@ -50,6 +65,17 @@ function initializeDatabase() {
         prize_name TEXT,
         prize_amount REAL,
         spin_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(user_id)
+      )
+    `);
+
+    // Daily rewards table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS daily_rewards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        reward_amount REAL,
+        reward_date DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(user_id)
       )
     `);
@@ -87,6 +113,73 @@ function updateWinLoss(userId, result, callback) {
   );
 }
 
+// Daily reward functions
+function claimDailyReward(userId, callback) {
+  const DAILY_REWARD = 500; // Daily reward amount
+  const today = new Date().toISOString().split('T')[0];
+
+  getUser(userId, (err, user) => {
+    if (err) return callback({ success: false, message: 'خطأ في قاعدة البيانات' });
+    if (!user) return callback({ success: false, message: 'لم يتم العثور على المستخدم' });
+
+    // Check if already claimed today
+    if (user.last_reward_date === today) {
+      return callback({
+        success: false,
+        message: `❌ لقد استلمت المكافأة اليومية بالفعل!\\n⏳ حاول غداً`,
+        canClaim: false
+      });
+    }
+
+    // Add reward to balance
+    updateBalance(userId, DAILY_REWARD, (err) => {
+      if (err) return callback({ success: false, message: 'خطأ في إضافة المكافأة' });
+
+      // Update last reward date
+      db.run(
+        'UPDATE users SET last_reward_date = ?, daily_reward_claimed = daily_reward_claimed + 1 WHERE user_id = ?',
+        [today, userId],
+        (err) => {
+          if (err) return callback({ success: false, message: 'خطأ في تحديث البيانات' });
+
+          // Save reward record
+          db.run(
+            'INSERT INTO daily_rewards (user_id, reward_amount) VALUES (?, ?)',
+            [userId, DAILY_REWARD],
+            () => {
+              callback({
+                success: true,
+                message: `🎁 مبروك!\\n✨ استلمت مكافأة يومية\\n💰 +${DAILY_REWARD} نقطة`,
+                reward: DAILY_REWARD,
+                newBalance: user.balance + DAILY_REWARD,
+                canClaim: true
+              });
+            }
+          );
+        }
+      );
+    });
+  });
+}
+
+function getDailyRewardStatus(userId, callback) {
+  getUser(userId, (err, user) => {
+    if (err) return callback({ success: false, message: 'خطأ في قاعدة البيانات' });
+    if (!user) return callback({ success: false, message: 'لم يتم العثور على المستخدم' });
+
+    const today = new Date().toISOString().split('T')[0];
+    const canClaim = user.last_reward_date !== today;
+
+    callback({
+      success: true,
+      canClaim,
+      lastClaimDate: user.last_reward_date,
+      totalClaimedRewards: user.daily_reward_claimed,
+      lastClaimWasToday: user.last_reward_date === today
+    });
+  });
+}
+
 // Game history functions
 function saveGameResult(userId, betAmount, result, multiplier, winnings, callback) {
   db.run(
@@ -99,6 +192,23 @@ function saveGameResult(userId, betAmount, result, multiplier, winnings, callbac
 function getGameHistory(userId, limit = 10, callback) {
   db.all(
     'SELECT * FROM game_history WHERE user_id = ? ORDER BY game_date DESC LIMIT ?',
+    [userId, limit],
+    callback
+  );
+}
+
+// Slot machine results
+function saveSlotResult(userId, betAmount, prizeType, winnings, callback) {
+  db.run(
+    'INSERT INTO slot_results (user_id, bet_amount, prize_type, winnings) VALUES (?, ?, ?, ?)',
+    [userId, betAmount, prizeType, winnings],
+    callback
+  );
+}
+
+function getSlotHistory(userId, limit = 10, callback) {
+  db.all(
+    'SELECT * FROM slot_results WHERE user_id = ? ORDER BY spin_date DESC LIMIT ?',
     [userId, limit],
     callback
   );
@@ -140,5 +250,9 @@ module.exports = {
   getGameHistory,
   saveGiftSpin,
   getGiftSpins,
-  getLeaderboard
+  getLeaderboard,
+  claimDailyReward,
+  getDailyRewardStatus,
+  saveSlotResult,
+  getSlotHistory
 };
