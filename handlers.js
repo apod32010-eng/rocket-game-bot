@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const db = require('./database');
 const gameLogic = require('./gameLogic');
+const slotMachine = require('./slotMachine');
 const config = require('./config');
 
 // Start command
@@ -45,7 +46,8 @@ function sendMainMenu(ctx) {
     `;
 
     ctx.reply(messageText, Markup.keyboard([
-      ['🚀 العب اللعبة', '🎡 عجلة الهدايا'],
+      ['🚀 العب اللعبة', '🎰 ماكينة الحظ'],
+      ['🎡 عجلة الهدايا', '🎁 المكافأة اليومية'],
       ['📊 إحصائيتي', '🏅 لوحة المتصدرين'],
       ['📖 القواعد', '⚙️ الإعدادات']
     ]).resize());
@@ -185,6 +187,49 @@ function handleWithdraw(ctx) {
   });
 }
 
+// Slot machine handler
+function handleSlotMachine(ctx) {
+  ctx.session = ctx.session || {};
+  ctx.reply(
+    '🎰 *ماكينة الحظ*\n\nأدخل مبلغ الرهان (من 10 إلى 10000):',
+    Markup.removeKeyboard()
+  );
+  ctx.session.waiting_for_slot_bet = true;
+}
+
+// Handle slot bet input
+function handleSlotBetInput(ctx) {
+  const betAmount = parseInt(ctx.message.text);
+  const userId = ctx.from.id;
+
+  if (isNaN(betAmount)) {
+    return ctx.reply('❌ أدخل رقم صحيح!');
+  }
+
+  slotMachine.playSlotMachine(userId, betAmount, (result) => {
+    if (!result.success) {
+      return ctx.reply(result.message);
+    }
+
+    const gameResult = result.result;
+    ctx.reply(
+      `${gameResult.message}\n\n💰 رصيدك الجديد: ${result.newBalance}`,
+      Markup.keyboard([['🎰 لعبة جديدة', '🏠 العودة']]).resize()
+    );
+  });
+
+  ctx.session.waiting_for_slot_bet = false;
+}
+
+// Daily reward handler
+function handleDailyReward(ctx) {
+  const userId = ctx.from.id;
+
+  db.claimDailyReward(userId, (result) => {
+    ctx.reply(result.message, Markup.removeKeyboard());
+  });
+}
+
 // Statistics handler
 function handleStats(ctx) {
   const userId = ctx.from.id;
@@ -235,7 +280,7 @@ function handleGiftWheel(ctx) {
 
     ctx.reply(
       result.message + `\n\n💰 رصيدك الجديد: ${result.newBalance}`,
-      Markup.keyboard([['🚀 العب اللعبة', '🎡 عجلة الهدايا'], ['🏠 العودة']]).resize()
+      Markup.keyboard([['🚀 العب اللعبة', '🎰 ماكينة الحظ'], ['🏠 العودة']]).resize()
     );
   });
 }
@@ -245,6 +290,7 @@ function handleRules(ctx) {
   const rules = `
 📖 *قواعد اللعبة*
 
+🚀 *لعبة الصاروخ:*
 1️⃣ ضع رهانك (10-10000)
 2️⃣ الصاروخ يبدأ بالارتفاع
 3️⃣ المضاعف يزداد مع الوقت
@@ -252,12 +298,21 @@ function handleRules(ctx) {
 5️⃣ إذا انفجر الصاروخ قبل السحب → تخسر الرهان
 6️⃣ إذا سحبت في الوقت المناسب → تربح المضاعف
 
+🎰 *ماكينة الحظ:*
+• اختبر حظك مع ماكينة الحظ
+• ثلاث رموز متطابقة = جائزة كبرى (100x)
+• رمزان متطابقان = جائزة وسطة (10x)
+• لا توجد مطابقات = خسارة
+
 📊 الإحصائيات:
 • نسبة الخسارة: 55%
 • نسبة الفوز: 45%
 
 🎁 عجلة الهدايا:
-اختبر حظك وربح جوائز!
+اختبر حظك وربح جوائز عشوائية!
+
+🎁 المكافأة اليومية:
+استلم 500 نقطة يومياً!
     `;
 
   ctx.reply(rules, Markup.removeKeyboard());
@@ -272,12 +327,23 @@ function handleMessage(ctx) {
     return;
   }
 
+  if (ctx.session?.waiting_for_slot_bet) {
+    handleSlotBetInput(ctx);
+    return;
+  }
+
   switch (text) {
     case '🚀 العب اللعبة':
       handlePlayGame(ctx);
       break;
+    case '🎰 ماكينة الحظ':
+      handleSlotMachine(ctx);
+      break;
     case '🎡 عجلة الهدايا':
       handleGiftWheel(ctx);
+      break;
+    case '🎁 المكافأة اليومية':
+      handleDailyReward(ctx);
       break;
     case '📊 إحصائيتي':
       handleStats(ctx);
@@ -290,6 +356,7 @@ function handleMessage(ctx) {
       break;
     case '🏠 العودة':
     case '🚀 العب مجدداً':
+    case '🎰 لعبة جديدة':
       sendMainMenu(ctx);
       break;
     default:
@@ -304,6 +371,9 @@ module.exports = {
   handleBetInput,
   showGameInterface,
   handleWithdraw,
+  handleSlotMachine,
+  handleSlotBetInput,
+  handleDailyReward,
   handleStats,
   handleLeaderboard,
   handleGiftWheel,
