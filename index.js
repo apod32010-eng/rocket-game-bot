@@ -43,6 +43,12 @@ bot.catch((err, ctx) => {
 // Start bot
 bot.launch().then(() => {
   console.log('🚀 Bot started successfully!');
+  console.log('✨ Features:');
+  console.log('  🚀 Rocket Crash Game');
+  console.log('  🎰 Slot Machine');
+  console.log('  🎁 Daily Rewards (500 points)');
+  console.log('  🎡 Gift Wheel');
+  console.log('  💰 Balance System');
   console.log('Waiting for commands...');
 }).catch(err => {
   console.error('Failed to start bot:', err);
